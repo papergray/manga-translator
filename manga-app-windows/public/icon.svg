@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <rect width="256" height="256" rx="32" fill="#0e0e0e"/>
+  <rect x="8" y="8" width="240" height="240" rx="28" fill="none" stroke="#d4a017" stroke-width="4"/>
+  <text x="128" y="160" font-family="serif" font-size="130" text-anchor="middle" fill="#d4a017">漫</text>
+</svg>

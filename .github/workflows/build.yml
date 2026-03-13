@@ -1,0 +1,156 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"           # triggers on version tags like v1.0.0
+  workflow_dispatch:   # manual trigger from GitHub UI
+
+jobs:
+  # ─── Android APK ───────────────────────────────────────────────────────────
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        working-directory: manga-app-android
+        run: npm install
+
+      - name: Build web app
+        working-directory: manga-app-android
+        run: npm run build
+
+      - name: Add Capacitor Android platform
+        working-directory: manga-app-android
+        run: npx cap add android
+
+      - name: Sync Capacitor
+        working-directory: manga-app-android
+        run: npx cap sync android
+
+      - name: Make Gradle executable
+        working-directory: manga-app-android
+        run: chmod +x android/gradlew
+
+      - name: Build debug APK
+        working-directory: manga-app-android
+        run: cd android && ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK
+        run: mv manga-app-android/android/app/build/outputs/apk/debug/app-debug.apk MangaTranslator-Android.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: MangaTranslator-Android.apk
+
+  # ─── Windows EXE ───────────────────────────────────────────────────────────
+  build-windows:
+    name: Build Windows EXE
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        working-directory: manga-app-windows
+        run: npm install
+
+      - name: Build and package
+        working-directory: manga-app-windows
+        run: npm run dist
+
+      - name: Find built files
+        working-directory: manga-app-windows/release
+        run: dir
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: |
+            manga-app-windows/release/*.exe
+
+  # ─── Create GitHub Release ─────────────────────────────────────────────────
+  release:
+    name: Create Release
+    needs: [build-android, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Download Android APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+
+      - name: Download Windows EXE
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Manga Translator ${{ github.ref_name }}"
+          body: |
+            ## 漫画 Manga Translator ${{ github.ref_name }}
+
+            ### Downloads
+            | Platform | File | Notes |
+            |----------|------|-------|
+            | 🤖 Android | `MangaTranslator-Android.apk` | Requires Android 7.0+ |
+            | 🪟 Windows | `MangaTranslator-Windows-Setup.exe` | Installer, Windows 10/11 x64 |
+            | 🪟 Windows | `MangaTranslator-Windows-Portable.exe` | No install needed |
+
+            ### What's included
+            - **Multi-API translation**: Google Gemini (free), Anthropic Claude, OpenAI GPT-4o, Mistral AI
+            - **On-Device mode**: 100% offline translation using local AI — no internet after first model download
+            - **Auto language detection**: Chinese, Japanese, Korean and more
+            - **15 target languages**: English, Spanish, French, German, Japanese, Korean, Arabic, and more
+            - **Memory limit controls** for on-device mode
+
+            ### Android Installation
+            1. Download `MangaTranslator-Android.apk`
+            2. Open Files app → tap the APK
+            3. Allow "Install unknown apps" when prompted
+            4. Install and open
+
+            ### Windows Installation
+            - **Installer**: Run `MangaTranslator-Windows-Setup.exe` → follow prompts
+            - **Portable**: Run `MangaTranslator-Windows-Portable.exe` directly — no install
+
+            > **First run (On-Device mode)**: Downloads ~150MB translation model once, then works fully offline.
+          files: |
+            MangaTranslator-Android.apk
+            *.exe
+          draft: false
+          prerelease: false
