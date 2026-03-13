@@ -1,0 +1,197 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag (e.g. v1.0.0)"
+        required: true
+        default: "v1.0.0"
+
+jobs:
+  # ─── Build Android APK ─────────────────────────────────────────────────────
+  build-android:
+    name: 🤖 Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        working-directory: manga-app-android
+        run: npm install
+
+      - name: Build web assets
+        working-directory: manga-app-android
+        run: npm run build
+
+      - name: Add Capacitor Android
+        working-directory: manga-app-android
+        run: npx cap add android
+
+      - name: Sync Capacitor
+        working-directory: manga-app-android
+        run: npx cap sync android
+
+      - name: Make Gradle executable
+        working-directory: manga-app-android
+        run: chmod +x android/gradlew
+
+      - name: Build APK
+        working-directory: manga-app-android
+        run: cd android && ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK
+        run: |
+          VERSION=${{ github.ref_name || github.event.inputs.tag }}
+          mv manga-app-android/android/app/build/outputs/apk/debug/app-debug.apk \
+             MangaTranslator-${VERSION}-Android.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: MangaTranslator-*-Android.apk
+          retention-days: 1
+
+  # ─── Build Windows EXE ─────────────────────────────────────────────────────
+  build-windows:
+    name: 🪟 Windows EXE
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        working-directory: manga-app-windows
+        run: npm install
+
+      - name: Build & package
+        working-directory: manga-app-windows
+        run: npm run dist
+
+      - name: List release files
+        working-directory: manga-app-windows/release
+        run: dir
+
+      - name: Rename EXE files
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name || github.event.inputs.tag }}"
+          Get-ChildItem "manga-app-windows/release/*.exe" | ForEach-Object {
+            $newName = $_.Name -replace "Setup", "${version}-Windows-Setup" `
+                               -replace "Portable", "${version}-Windows-Portable"
+            Rename-Item $_.FullName $newName
+          }
+
+      - name: Upload EXE artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: manga-app-windows/release/*.exe
+          retention-days: 1
+
+  # ─── Create GitHub Release ─────────────────────────────────────────────────
+  release:
+    name: 🚀 Publish Release
+    needs: [build-android, build-windows]
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Android APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: artifacts/
+
+      - name: Download Windows EXE
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-exe
+          path: artifacts/
+
+      - name: List artifacts
+        run: ls -lh artifacts/
+
+      - name: Get version
+        id: version
+        run: echo "tag=${{ github.ref_name || github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "漫画 Manga Translator ${{ steps.version.outputs.tag }}"
+          body: |
+            ## 漫画 Manga Translator ${{ steps.version.outputs.tag }}
+
+            AI-powered manga translation for Android & Windows.
+            Translates Chinese, Japanese and Korean CBZ files using Claude AI, Google Gemini, or fully offline on-device AI.
+
+            ---
+
+            ### ⬇️ Downloads
+
+            | Platform | File | Requirements |
+            |----------|------|--------------|
+            | 🤖 Android | `MangaTranslator-*-Android.apk` | Android 7.0+ |
+            | 🪟 Windows Installer | `MangaTranslator-*-Windows-Setup.exe` | Windows 10/11 x64 |
+            | 🪟 Windows Portable | `MangaTranslator-*-Windows-Portable.exe` | Windows 10/11 x64 |
+
+            ---
+
+            ### 📱 Android Install
+            1. Download the `.apk` file to your phone
+            2. Open Files → tap the APK
+            3. Allow "Install from unknown sources" if prompted
+            4. Install & open
+
+            ### 🪟 Windows Install
+            - **Installer** → run Setup.exe, follow the prompts
+            - **Portable** → just run the EXE directly, no install needed
+
+            ---
+
+            ### 🤖 AI Engines
+            | Engine | Cost | Notes |
+            |--------|------|-------|
+            | 📱 On-Device | Free forever | Offline after ~150MB first download |
+            | ✨ Google Gemini | Free (1,500/day) | [Get key](https://aistudio.google.com/app/apikey) |
+            | 🧠 Anthropic Claude | Paid | [Get key](https://console.anthropic.com/settings/keys) |
+            | 💬 OpenAI GPT-4o | Paid | [Get key](https://platform.openai.com/api-keys) |
+            | ⚡ Mistral Pixtral | Free tier | [Get key](https://console.mistral.ai/api-keys) |
+
+            ---
+
+            **Full source code and build instructions:** see [README](https://github.com/${{ github.repository }}#readme)
+          files: artifacts/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
